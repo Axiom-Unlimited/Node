@@ -13,14 +13,20 @@ socket = None
 status = 0
 
 if __name__ == '__main__':
+    print("===========================================================================================================")
+    print("Node: " + str(settings.nodePortId) + " started!")
+    print("===========================================================================================================")
     camera = PiCamera()
     socket = sock.NodeSocket()
     ts = time.time()
 
     nodePort = settings.basePort + settings.nodePortId
+    print("Attempting to Connect to socket at port:" + str(nodePort) + " ...")
     socket.connect(settings.ipAddress, nodePort)
     camera.resolution(settings.frameWidth, settings.frameHeight)
     camera.framerate(settings.frameRate)
+
+    print("Camera and Port initialized!")
 
     while True:
         cmdMessage = socket.receive()
