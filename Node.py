@@ -3,10 +3,46 @@ import socket
 import Settings
 import datetime as dt
 import time
+import threading
 
 
 class Struct:
     pass
+
+
+class UDPReceiver(threading.Thread):
+
+    def __init__(self, callback):
+        threading.Thread.__init__(self)
+        self.callBack = callback
+
+    def run(self):
+        receiverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        receiverSocket.bind(('', Settings.broadcastPort))
+        receiverSocket.settimeout(100)
+        while True:
+            # receive incoming commands
+            try:
+                data = receiverSocket.recv(8228)
+                dataTuple = struct.unpack(BroadcastPackage, data)
+                states = dataTuple[1]
+                # to get index (260 * node offset)/260
+                newStatus = struct.unpack(NodeState,
+                                          states[(257 * Settings.nodePortId):(257 * Settings.nodePortId) + 257])
+                self.callBack.update(newStatus)
+            except BlockingIOError as e:
+                print("no message received")
+                pass
+
+
+class Callback(object):
+    def __init__(self):
+        self.captureStatus = False
+        self.captureName = ""
+
+    def update(self, newStatus):
+        self.captureName = newStatus[0].decode("utf-8").rstrip('\x00')
+        self.captureStatus = newStatus[1]
 
 
 # message structures
@@ -14,25 +50,19 @@ BroadcastPackage = '>i8224s'
 NodeState = '>256s?'
 NodeStatusPackage = '>i1000s?'
 
-
 if __name__ == '__main__':
 
     camera = None
+    isCapturing = False
+    # # state variables
+    callbackState = Callback()
 
-    # state variables
-    captureStatus = False
-    captureName = ""
-
+    receiver = UDPReceiver(callbackState)
+    receiver.start()
     # initialize the camera
     # camera = PiCamera()
     # camera.resolution = (settings.frameWidth, settings.frameHeight)
     # camera.framerate = (settings.frameRate)
-
-    # initialize the udp receiver
-    receiverSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    receiverSocket.bind(('', Settings.broadcastPort))
-    receiverSocket.settimeout(10)
-    # receiverSocket.setblocking(False)
 
     # initialize the udp sender
     senderSocket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -41,38 +71,29 @@ if __name__ == '__main__':
     while True:
         ts = time.time()
 
-        # receive incoming commands
-        try:
-            data = receiverSocket.recv(8228)
-            dataTuple = struct.unpack(BroadcastPackage, data)
-            states = dataTuple[1]
-            # to get index (260 * node offset)/260
-            newStatus = struct.unpack(NodeState, states[(257 * Settings.nodePortId):(257 * Settings.nodePortId)+257])
-            cap = str(newStatus[0])
-            if cap.strip("0") != captureName:
-                captureName = newStatus
-
-            if newStatus[1] != captureStatus:
-                captureStatus = newStatus[1]
-        except BlockingIOError as e:
-            pass
-            # print("no message received")
-
         # capture
-        if captureStatus:  # start capture
-            if captureName == "":
-                st = dt.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H-%M-%S')
-                file = Settings.videoDataPath + "/" + "Node" + str(Settings.nodePortId) + " " + st + ".h264"
-                print(file)
-                # camera.start_recording(file)
-            else:
-                file = str(Settings.videoDataPath) + "/" + "Node" + str(Settings.nodePortId) + captureName + ".h264"
-                print(file)
+        if callbackState.captureStatus:  # start capture
+            if not isCapturing:
+                if callbackState.captureName == "none":
+                    st = dt.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H-%M-%S')
+                    file = Settings.videoDataPath + "/" + "Node" + str(Settings.nodePortId) + " " + st + ".h264"
+                    print(file)
+                    # camera.start_recording(file)
+                    isCapturing = True
+                else:
+                    file = str(Settings.videoDataPath) + "/" + "Node" + str(
+                        Settings.nodePortId) + " " + callbackState.captureName + ".h264"
+                    print(file)
+                    isCapturing = True
                 # camera.start_recording(file)
         else:  # stop capture
+            isCapturing = False
             # camera.stop_recording()
-            print()
+        #     print()
 
         # send node state status
-        message = struct.pack(NodeStatusPackage, Settings.nodePortId, bytes("no error", 'utf-8'), captureStatus)
+        message = struct.pack(NodeStatusPackage
+                              , Settings.nodePortId
+                              , bytes("no error", 'utf-8')
+                              , callbackState.captureStatus)
         senderSocket.send(message)
